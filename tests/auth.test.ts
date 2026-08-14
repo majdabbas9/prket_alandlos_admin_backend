@@ -10,6 +10,9 @@ jest.mock('../src/utils/d1', () => ({
       return { username: 'admin', password_hash: hash, role: 'admin' };
     }
     return null;
+  }),
+  updatePassword: jest.fn(async (username: string, passwordHash: string) => {
+    return;
   })
 }));
 
@@ -57,6 +60,47 @@ describe('Auth Endpoints', () => {
     const res = await request(app)
       .post('/auth/validate')
       .set('Authorization', `Bearer invalidtoken`);
+    
+    expect(res.statusCode).toEqual(401);
+    expect(res.body).toHaveProperty('success', false);
+  });
+
+  it('should change the password successfully when credentials are correct', async () => {
+    const res = await request(app)
+      .post('/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        currentPassword: 'admin',
+        newPassword: 'newadminpassword',
+      });
+    
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('success', true);
+    expect(res.body).toHaveProperty('message', 'Password changed successfully');
+  });
+
+  it('should fail to change the password when current password is incorrect', async () => {
+    const res = await request(app)
+      .post('/auth/change-password')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        currentPassword: 'wrongpassword',
+        newPassword: 'newadminpassword',
+      });
+    
+    expect(res.statusCode).toEqual(401);
+    expect(res.body).toHaveProperty('success', false);
+    expect(res.body).toHaveProperty('message', 'Incorrect current password');
+  });
+
+  it('should fail to change the password when token is invalid', async () => {
+    const res = await request(app)
+      .post('/auth/change-password')
+      .set('Authorization', `Bearer invalidtoken`)
+      .send({
+        currentPassword: 'admin',
+        newPassword: 'newadminpassword',
+      });
     
     expect(res.statusCode).toEqual(401);
     expect(res.body).toHaveProperty('success', false);

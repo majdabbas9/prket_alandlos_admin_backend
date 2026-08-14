@@ -42,3 +42,7 @@ export const getUserByUsername = async (username: string) => {
   const results = await queryD1('SELECT * FROM users WHERE username = ?', [username]);
   return results.length > 0 ? results[0] : null;
 };
+
+export const updatePassword = async (username: string, passwordHash: string) => {
+  await queryD1('UPDATE users SET password_hash = ? WHERE username = ?', [passwordHash, username]);
+};
