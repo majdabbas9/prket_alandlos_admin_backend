@@ -1,0 +1,64 @@
+import request from 'supertest';
+import app from '../src/app';
+import bcrypt from 'bcryptjs';
+
+// Mock the D1 utility so tests can run without real Cloudflare credentials
+jest.mock('../src/utils/d1', () => ({
+  getUserByUsername: jest.fn(async (username: string) => {
+    if (username === 'admin') {
+      const hash = await bcrypt.hash('admin', 10);
+      return { username: 'admin', password_hash: hash, role: 'admin' };
+    }
+    return null;
+  })
+}));
+
+describe('Auth Endpoints', () => {
+  let token = '';
+
+  it('should login with valid credentials and return a token', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({
+        username: 'admin',
+        password: 'admin',
+      });
+    
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('success', true);
+    expect(res.body).toHaveProperty('token');
+    
+    token = res.body.token; // Save token for next tests
+  });
+
+  it('should fail to login with invalid credentials', async () => {
+    const res = await request(app)
+      .post('/auth/login')
+      .send({
+        username: 'wrong',
+        password: 'password',
+      });
+    
+    expect(res.statusCode).toEqual(401);
+    expect(res.body).toHaveProperty('success', false);
+  });
+
+  it('should validate a valid token', async () => {
+    const res = await request(app)
+      .post('/auth/validate')
+      .set('Authorization', `Bearer ${token}`);
+    
+    expect(res.statusCode).toEqual(200);
+    expect(res.body).toHaveProperty('success', true);
+    expect(res.body.data).toHaveProperty('username', 'admin');
+  });
+
+  it('should fail to validate an invalid token', async () => {
+    const res = await request(app)
+      .post('/auth/validate')
+      .set('Authorization', `Bearer invalidtoken`);
+    
+    expect(res.statusCode).toEqual(401);
+    expect(res.body).toHaveProperty('success', false);
+  });
+});
