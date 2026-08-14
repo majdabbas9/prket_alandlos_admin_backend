@@ -2,8 +2,10 @@ import { Router, Request, Response } from 'express';
 import { generateToken, verifyToken } from '../utils/jwt';
 import { getUserByUsername, updatePassword } from '../utils/d1';
 import bcrypt from 'bcryptjs';
+import { getLogger } from '../utils/logger';
 
 const router = Router();
+const logger = getLogger(__filename);
 
 // Login route using D1
 router.post('/login', async (req: Request, res: Response) => {
@@ -31,7 +33,7 @@ router.post('/login', async (req: Request, res: Response) => {
       });
     }
   } catch (error: any) {
-    console.error("LOGIN ERROR", error);
+    logger.error({ err: error }, 'Login error');
     res.status(500).json({
       success: false,
       message: 'Internal server error during login',
@@ -69,7 +71,7 @@ router.post('/validate', (req: Request, res: Response) => {
       data: decoded,
     });
   } catch (error: any) {
-    console.error("VALIDATE ERROR", error);
+    logger.error({ err: error }, 'Token validation error');
     res.status(401).json({
       success: false,
       message: error.message || 'Invalid token',
@@ -138,7 +140,7 @@ router.post('/change-password', async (req: Request, res: Response) => {
       message: 'Password changed successfully',
     });
   } catch (error: any) {
-    console.error("CHANGE PASSWORD ERROR", error);
+    logger.error({ err: error }, 'Change password error');
     res.status(401).json({
       success: false,
       message: error.message || 'Invalid or expired token',

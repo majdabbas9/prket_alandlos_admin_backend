@@ -1,5 +1,9 @@
 import dotenv from 'dotenv';
+import { getLogger } from './logger';
+
 dotenv.config();
+
+const logger = getLogger(__filename);
 
 const {
   CLOUDFLARE_ACCOUNT_ID,
@@ -30,7 +34,7 @@ export const queryD1 = async (sql: string, params: any[] = []) => {
   const data: any = await response.json();
 
   if (!data.success) {
-    console.error('D1 Query Error:', data.errors);
+    logger.error({ errors: data.errors, sql, params }, 'D1 Query Error');
     throw new Error(data.errors[0]?.message || 'Database query failed');
   }
 
