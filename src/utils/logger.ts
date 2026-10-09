@@ -3,14 +3,17 @@ import path from 'path';
 
 const baseLogger = pino({
   level: process.env.LOG_LEVEL || 'info',
-  transport: process.env.NODE_ENV !== 'production' ? {
-    target: 'pino-pretty',
-    options: {
-      colorize: true,
-      translateTime: 'SYS:yyyy-mm-dd HH:MM:ss.l',
-      ignore: 'pid,hostname'
-    }
-  } : undefined
+  transport:
+    process.env.NODE_ENV !== 'production'
+      ? {
+          target: 'pino-pretty',
+          options: {
+            colorize: true,
+            translateTime: 'SYS:yyyy-mm-dd HH:MM:ss.l',
+            ignore: 'pid,hostname',
+          },
+        }
+      : undefined,
 });
 
 /**
@@ -33,7 +36,7 @@ export const createLogger = getLogger;
 // Attach helper methods to baseLogger for CommonJS compatibility & ease of use
 const logger = Object.assign(baseLogger, {
   getLogger,
-  createLogger
+  createLogger,
 });
 
 export default logger;

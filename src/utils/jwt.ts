@@ -11,7 +11,10 @@ const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
  * @param expiresIn Expiration time (e.g., '1h', '7d')
  * @returns The signed JWT token
  */
-export const generateToken = (payload: object, expiresIn: any = '1h'): string => {
+export const generateToken = (
+  payload: object,
+  expiresIn: jwt.SignOptions['expiresIn'] = '1h',
+): string => {
   const options: jwt.SignOptions = { expiresIn };
   return jwt.sign(payload, JWT_SECRET, options);
 };
@@ -24,7 +27,7 @@ export const generateToken = (payload: object, expiresIn: any = '1h'): string =>
 export const verifyToken = (token: string): object | string => {
   try {
     return jwt.verify(token, JWT_SECRET);
-  } catch (error) {
+  } catch {
     throw new Error('Invalid or expired token');
   }
 };

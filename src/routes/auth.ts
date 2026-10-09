@@ -14,7 +14,7 @@ router.post('/login', async (req: Request, res: Response) => {
   try {
     const user = await getUserByUsername(username);
 
-    if (user && await bcrypt.compare(password, user.password_hash)) {
+    if (user && (await bcrypt.compare(password, user.password_hash))) {
       const payload = {
         username: user.username,
         role: user.role,
@@ -32,7 +32,7 @@ router.post('/login', async (req: Request, res: Response) => {
         message: 'Invalid credentials',
       });
     }
-  } catch (error: any) {
+  } catch (error) {
     logger.error({ err: error }, 'Login error');
     res.status(500).json({
       success: false,
@@ -56,7 +56,7 @@ router.post('/validate', (req: Request, res: Response) => {
   }
 
   if (!token) {
-     res.status(401).json({
+    res.status(401).json({
       success: false,
       message: 'Token is missing',
     });
@@ -70,11 +70,11 @@ router.post('/validate', (req: Request, res: Response) => {
       message: 'Token is valid',
       data: decoded,
     });
-  } catch (error: any) {
+  } catch (error) {
     logger.error({ err: error }, 'Token validation error');
     res.status(401).json({
       success: false,
-      message: error.message || 'Invalid token',
+      message: error instanceof Error ? error.message : 'Invalid token',
     });
   }
 });
@@ -139,11 +139,11 @@ router.post('/change-password', async (req: Request, res: Response) => {
       success: true,
       message: 'Password changed successfully',
     });
-  } catch (error: any) {
+  } catch (error) {
     logger.error({ err: error }, 'Change password error');
     res.status(401).json({
       success: false,
-      message: error.message || 'Invalid or expired token',
+      message: error instanceof Error ? error.message : 'Invalid or expired token',
     });
   }
 });
