@@ -13,7 +13,7 @@ app.use((req, res, next) => {
     const duration = Date.now() - start;
     logger.info(
       { method: req.method, url: req.originalUrl, status: res.statusCode, durationMs: duration },
-      `HTTP ${req.method} ${req.originalUrl} - ${res.statusCode} (${duration}ms)`
+      `HTTP ${req.method} ${req.originalUrl} - ${res.statusCode} (${duration}ms)`,
     );
   });
   next();
@@ -33,10 +33,10 @@ app.get('/health', (req, res) => {
   res.json({ status: 'Auth server is running' });
 });
 
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
   logger.error(
     { err, method: req.method, url: req.originalUrl },
-    `Unhandled Server Error on ${req.method} ${req.originalUrl}: ${err.message}`
+    `Unhandled Server Error on ${req.method} ${req.originalUrl}: ${err.message}`,
   );
   res.status(500).json({ error: err.message });
 });

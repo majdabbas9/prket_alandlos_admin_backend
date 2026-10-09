@@ -11,46 +11,40 @@ jest.mock('../src/utils/d1', () => ({
     }
     return null;
   }),
-  updatePassword: jest.fn(async (username: string, passwordHash: string) => {
+  updatePassword: jest.fn(async (_username: string, _passwordHash: string) => {
     return;
-  })
+  }),
 }));
 
 describe('Auth Endpoints', () => {
   let token = '';
 
   it('should login with valid credentials and return a token', async () => {
-    const res = await request(app)
-      .post('/auth/login')
-      .send({
-        username: 'admin',
-        password: 'admin',
-      });
-    
+    const res = await request(app).post('/auth/login').send({
+      username: 'admin',
+      password: 'admin',
+    });
+
     expect(res.statusCode).toEqual(200);
     expect(res.body).toHaveProperty('success', true);
     expect(res.body).toHaveProperty('token');
-    
+
     token = res.body.token; // Save token for next tests
   });
 
   it('should fail to login with invalid credentials', async () => {
-    const res = await request(app)
-      .post('/auth/login')
-      .send({
-        username: 'wrong',
-        password: 'password',
-      });
-    
+    const res = await request(app).post('/auth/login').send({
+      username: 'wrong',
+      password: 'password',
+    });
+
     expect(res.statusCode).toEqual(401);
     expect(res.body).toHaveProperty('success', false);
   });
 
   it('should validate a valid token', async () => {
-    const res = await request(app)
-      .post('/auth/validate')
-      .set('Authorization', `Bearer ${token}`);
-    
+    const res = await request(app).post('/auth/validate').set('Authorization', `Bearer ${token}`);
+
     expect(res.statusCode).toEqual(200);
     expect(res.body).toHaveProperty('success', true);
     expect(res.body.data).toHaveProperty('username', 'admin');
@@ -60,7 +54,7 @@ describe('Auth Endpoints', () => {
     const res = await request(app)
       .post('/auth/validate')
       .set('Authorization', `Bearer invalidtoken`);
-    
+
     expect(res.statusCode).toEqual(401);
     expect(res.body).toHaveProperty('success', false);
   });
@@ -73,7 +67,7 @@ describe('Auth Endpoints', () => {
         currentPassword: 'admin',
         newPassword: 'newadminpassword',
       });
-    
+
     expect(res.statusCode).toEqual(200);
     expect(res.body).toHaveProperty('success', true);
     expect(res.body).toHaveProperty('message', 'Password changed successfully');
@@ -87,7 +81,7 @@ describe('Auth Endpoints', () => {
         currentPassword: 'wrongpassword',
         newPassword: 'newadminpassword',
       });
-    
+
     expect(res.statusCode).toEqual(401);
     expect(res.body).toHaveProperty('success', false);
     expect(res.body).toHaveProperty('message', 'Incorrect current password');
@@ -101,7 +95,7 @@ describe('Auth Endpoints', () => {
         currentPassword: 'admin',
         newPassword: 'newadminpassword',
       });
-    
+
     expect(res.statusCode).toEqual(401);
     expect(res.body).toHaveProperty('success', false);
   });
