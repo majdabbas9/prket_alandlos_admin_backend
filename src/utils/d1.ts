@@ -8,7 +8,7 @@ const logger = getLogger(__filename);
 const {
   CLOUDFLARE_ACCOUNT_ID,
   CLOUDFLARE_DATABASE_ID,
-  CLOUDFLARE_API_TOKEN_D1,
+  CLOUDFLARE_API_TOKEN,
 } = process.env;
 
 /**
@@ -16,7 +16,7 @@ const {
  */
 export const queryD1 = async (sql: string, params: any[] = []) => {
 
-  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_DATABASE_ID || !CLOUDFLARE_API_TOKEN_D1) {
+  if (!CLOUDFLARE_ACCOUNT_ID || !CLOUDFLARE_DATABASE_ID || !CLOUDFLARE_API_TOKEN) {
     throw new Error('Cloudflare credentials are not configured in .env');
   }
 
@@ -25,7 +25,7 @@ export const queryD1 = async (sql: string, params: any[] = []) => {
   const response = await fetch(url, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN_D1}`,
+      'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ sql, params }),
