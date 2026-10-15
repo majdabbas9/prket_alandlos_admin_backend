@@ -1,11 +1,11 @@
 // Shared helpers for the post-deploy integration tests (it/*.test.mjs). They run against the
 // live API Worker, using only Node built-ins (node:test + fetch), so no npm install. Run by
 // .github/workflows/integration-tests.yml after each publish run deploys to dev.
-//   API_URL                          Worker URL (default: the dev workers.dev URL)
+//   API_URL                          admin backend Worker URL (default: dev's workers.dev URL)
 //   ADMIN_USERNAME / ADMIN_PASSWORD  admin credentials; tests that need a token skip without them
 
 export const API_URL = (
-  process.env.API_URL || 'https://prket-alandlos-api.majd-abbas222.workers.dev'
+  process.env.API_URL || 'https://prket-alandlos-auth.majd-abbas222.workers.dev'
 ).replace(/\/+$/, '');
 export const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
