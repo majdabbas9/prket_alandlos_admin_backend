@@ -4,3 +4,6 @@ dist
 tests
 jest.config.js
 coverage
+
+# Worker code for Cloudflare (deployed separately, not part of the image)
+cloudflare

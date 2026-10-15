@@ -1,0 +1,38 @@
+// The admin (auth) backend's Worker on Cloudflare Containers (auth.<domain>).
+//   everything -> the AdminBackend container (port 5001): /auth/* for the admin frontend,
+//   /auth/validate for the main backend's token checks
+// Sized from `docker stats` on the local stack: idle/peak ~53 MiB, near-zero CPU (JWT verify,
+// bcrypt on login) -> lite.
+//
+// Deployed by .github/workflows/ci-cd.yml (deploy job), once per environment: CI writes a copy
+// (wrangler.ci.json) with that environment's names from prket_alandlos_infra's
+// scripts/env-config.mjs - the values below are dev's - plus:
+//   image          registry.cloudflare.com/<account id>/<this name>:sha-<commit> (pushed by CI)
+//   instance_type  <ENV>_ADMIN_BACKEND_INSTANCE or the run's `instance` input, if set
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "prket-alandlos-auth",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  // The custom auth domain (auth.<domain>) is passed by CI (`wrangler deploy --domain`);
+  // workers.dev stays on so the default URL keeps working.
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true }
+  },
+  "containers": [
+    {
+      "class_name": "AdminBackend",
+      "image": "prket-alandlos-admin-backend",
+      "instance_type": "lite", // 1/16 vCPU, 256 MiB RAM, 2 GB disk
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "ADMIN_BACKEND", "class_name": "AdminBackend" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AdminBackend"] }]
+  // Secrets (set by CI via `wrangler secret bulk`):
+  //   CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_DATABASE_ID, D1_API_TOKEN, JWT_SECRET
+}

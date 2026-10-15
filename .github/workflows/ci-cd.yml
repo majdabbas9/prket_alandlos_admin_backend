@@ -1,0 +1,268 @@
+name: CI/CD
+
+# On every push to main (and by hand), in order - each job only runs if the one before passed:
+#   unit-tests  - npm test
+#   ghcr        - the app image (Dockerfile) to GHCR, tagged latest + sha-<short sha>
+#                 (used by prket_alandlos_infra's local compose stacks)
+#   cloudflare  - the Cloudflare Containers image (cloudflare.Dockerfile, built on top of the
+#                 GHCR image) to each environment's Cloudflare registry, same tags
+#   deploy      - the Worker in cloudflare/ with that image, to each environment
+#   it          - integration tests (integration-tests.yml) against what was just deployed
+# Names, hostnames and IDs come from prket_alandlos_infra's scripts/env-config.mjs, and the
+# D1 database + admin user from its Provision workflow - run that once on a new account
+# before this deploys.
+# dev and prod are separate Cloudflare accounts; only dev is wired up so far (matrix.include).
+#   vars:    DEV_/PROD_ CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_DATABASE_ID, URL, optional ADMIN_BACKEND_INSTANCE
+#   secrets: DEV_/PROD_ CLOUDFLARE_API_TOKEN (Containers, Workers Scripts, D1, Zone/DNS),
+#            ADMIN_USERNAME, ADMIN_PASSWORD (for the IT), optional D1_API_TOKEN, JWT_SECRET
+
+on:
+  push:
+    branches: ['main', 'master']
+  workflow_dispatch:
+    inputs:
+      instance:
+        description: 'Container size for this deploy: lite|basic|standard-1..4 or {"vcpu":0.5,"memory_mib":2048,"disk_mb":4000} (empty = <ENV>_ADMIN_BACKEND_INSTANCE / wrangler.jsonc)'
+        type: string
+        required: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  # Repository name in the Cloudflare registry: registry.cloudflare.com/<account id>/prket-alandlos-admin-backend
+  CF_IMAGE_NAME: prket-alandlos-admin-backend
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20 # same as the image
+          cache: npm
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npm test
+
+  ghcr:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUBTOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  cloudflare:
+    needs: ghcr
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        # PROD joins once its PROD_* variables and secrets are set
+        include:
+          - prefix: DEV
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars[format('{0}_CLOUDFLARE_ACCOUNT_ID', matrix.prefix)] }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets[format('{0}_CLOUDFLARE_API_TOKEN', matrix.prefix)] }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # wrangler 4 requires Node >= 22
+
+      - name: Check Cloudflare settings
+        run: |
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "Missing variable ${{ matrix.prefix }}_CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "Missing secret ${{ matrix.prefix }}_CLOUDFLARE_API_TOKEN"; exit 1; }
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUBTOKEN }}
+
+      # Same tag scheme as the GHCR image (metadata-action's sha-<7 chars>)
+      - name: Build Cloudflare image
+        run: |
+          tag="sha-${GITHUB_SHA::7}"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          docker build -f cloudflare.Dockerfile \
+            --build-arg "BASE_IMAGE=$REGISTRY/${IMAGE_NAME,,}:$tag" \
+            -t "$CF_IMAGE_NAME:$tag" -t "$CF_IMAGE_NAME:latest" .
+
+      # sha tag first, so latest never points at an image whose sha tag is missing
+      - name: Push to the ${{ matrix.prefix }} Cloudflare registry
+        run: |
+          npx --yes wrangler@4.149.0 containers push "$CF_IMAGE_NAME:$TAG"
+          npx --yes wrangler@4.149.0 containers push "$CF_IMAGE_NAME:latest"
+          echo "Pushed registry.cloudflare.com/$CLOUDFLARE_ACCOUNT_ID/$CF_IMAGE_NAME:$TAG (+ latest)" >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    needs: cloudflare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - prefix: DEV
+            env: dev
+    concurrency:
+      group: deploy-admin-backend-${{ matrix.env }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: cloudflare
+    env:
+      ENV_NAME: ${{ matrix.env }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets[format('{0}_CLOUDFLARE_API_TOKEN', matrix.prefix)] }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout prket_alandlos_infra scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/prket_alandlos_infra
+          ref: master
+          path: .infra
+          sparse-checkout: scripts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # wrangler 4 requires Node >= 22
+
+      # Resolved in this job (not passed as job outputs): GitHub drops job outputs that contain
+      # a secret value, and the admin username is part of some of these names.
+      - name: Resolve ${{ matrix.env }} settings
+        run: |
+          node ../.infra/scripts/env-config.mjs > "$RUNNER_TEMP/config"
+          get() { sed -n "s/^$1=//p" "$RUNNER_TEMP/config"; }
+          {
+            echo "CLOUDFLARE_ACCOUNT_ID=$(get account_id)"
+            echo "WORKER_NAME=$(get auth_worker)"
+            echo "CLOUDFLARE_DATABASE_ID=$(get database_id)"
+            echo "AUTH_DOMAIN=$(get auth)"
+            echo "INSTANCE=${INSTANCE:-$(get admin_backend_instance)}"
+          } >> "$GITHUB_ENV"
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          INSTANCE: ${{ inputs.instance }}
+
+      - run: npm ci --no-audit --no-fund
+
+      - run: npx tsc --noEmit
+
+      # wrangler.jsonc with this environment's Worker name, image and size
+      - name: Write environment wrangler config
+        run: |
+          node -e '
+            const fs = require("fs");
+            const ts = require("typescript");
+            const { config, error } = ts.parseConfigFileTextToJson("wrangler.jsonc", fs.readFileSync("wrangler.jsonc", "utf8"));
+            if (error) throw new Error(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+            const env = process.env;
+            config.name = env.WORKER_NAME;
+
+            // "basic" -> named type; {"vcpu":..,"memory_mib":..[,"disk_mb":..]} -> custom type
+            const size = (value) => {
+              value = (value || "").trim();
+              if (!value) return undefined;
+              if (!value.startsWith("{")) return value;
+              let o;
+              try { o = JSON.parse(value); } catch { throw new Error(`instance: invalid JSON: ${value}`); }
+              for (const k of ["vcpu", "memory_mib"])
+                if (typeof o[k] !== "number") throw new Error(`instance: "${k}" must be a number: ${value}`);
+              return o;
+            };
+            const [c] = config.containers;
+            c.image = `registry.cloudflare.com/${env.CLOUDFLARE_ACCOUNT_ID}/${c.image}:sha-${env.GITHUB_SHA.slice(0, 7)}`;
+            c.instance_type = size(env.INSTANCE) ?? c.instance_type;
+            console.log(`${c.class_name}: ${c.image}, instance_type ${JSON.stringify(c.instance_type)}`);
+            fs.writeFileSync("wrangler.ci.json", JSON.stringify(config, null, 2));
+          '
+          echo "Worker $WORKER_NAME"
+
+      # --domain makes wrangler create the DNS record + certificate for the auth hostname
+      # (token needs Zone > Workers Routes: Edit)
+      - name: Deploy Worker + container
+        run: |
+          args=(--config wrangler.ci.json)
+          [ -n "$AUTH_DOMAIN" ] && args+=(--domain "$AUTH_DOMAIN")
+          npx wrangler deploy "${args[@]}"
+
+      # Set after deploy so the first deploy can create the Worker; changing
+      # secrets rolls a new version, so the container restarts with the new values.
+      # JWT_SECRET only lives on the Worker: without a GitHub secret it is
+      # generated once and then left alone (rotating it logs every admin out).
+      - name: Sync secrets
+        run: |
+          set -o pipefail
+          if [ -z "$JWT_SECRET" ]; then
+            if npx wrangler secret list --config wrangler.ci.json --format json | grep -q '"JWT_SECRET"'; then
+              echo "JWT_SECRET: keeping the value already on the Worker"
+              export SKIP_JWT=1
+            else
+              echo "JWT_SECRET: generating a new one"
+              JWT_SECRET=$(openssl rand -hex 48)
+              echo "::add-mask::$JWT_SECRET"
+              export JWT_SECRET
+            fi
+          fi
+          node -e '
+            const keys = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_DATABASE_ID", "D1_API_TOKEN"];
+            if (!process.env.SKIP_JWT) keys.push("JWT_SECRET");
+            const missing = keys.filter((k) => !process.env[k]);
+            if (missing.length) { console.error("Missing: " + missing.join(", ")); process.exit(1); }
+            console.log(JSON.stringify(Object.fromEntries(keys.map((k) => [k, process.env[k]]))));
+          ' | npx wrangler secret bulk --config wrangler.ci.json
+        env:
+          # The D1 REST API token; defaults to the deploy token (needs Account > D1: Edit)
+          D1_API_TOKEN: ${{ secrets[format('{0}_D1_API_TOKEN', matrix.prefix)] || secrets[format('{0}_CLOUDFLARE_API_TOKEN', matrix.prefix)] }}
+          JWT_SECRET: ${{ secrets[format('{0}_JWT_SECRET', matrix.prefix)] }}
+
+  it:
+    needs: deploy
+    uses: ./.github/workflows/integration-tests.yml
+    with:
+      environment: dev
+    secrets: inherit

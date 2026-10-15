@@ -1,0 +1,67 @@
+name: Integration Tests
+
+# it/admin-backend.test.mjs against the deployed admin backend Worker (auth.<domain>, /auth/*).
+# Called by ci-cd.yml right after its deploy, or run by hand.
+#   vars:    DEV_/PROD_ CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_DATABASE_ID, URL (to resolve the auth
+#            URL with prket_alandlos_infra's scripts/env-config.mjs)
+#   secrets: DEV_/PROD_ CLOUDFLARE_API_TOKEN, ADMIN_USERNAME, ADMIN_PASSWORD - the admin user
+#            Provision seeds; tests that need a token skip without them
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'dev or prod'
+        type: string
+        default: 'dev'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to test'
+        type: choice
+        options: ['dev', 'prod']
+        default: 'dev'
+
+concurrency:
+  group: integration-tests-${{ inputs.environment || 'dev' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  it:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ENV_NAME: ${{ inputs.environment || 'dev' }}
+      PREFIX: ${{ (inputs.environment || 'dev') == 'prod' && 'PROD' || 'DEV' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout prket_alandlos_infra scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/prket_alandlos_infra
+          ref: master
+          path: .infra
+          sparse-checkout: scripts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve auth URL
+        run: |
+          node .infra/scripts/env-config.mjs > "$RUNNER_TEMP/config"
+          sed -n 's/^auth_url=/API_URL=/p' "$RUNNER_TEMP/config" >> "$GITHUB_ENV"
+        env:
+          VARS_JSON: ${{ toJSON(vars) }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets[format('{0}_CLOUDFLARE_API_TOKEN', env.PREFIX)] }}
+
+      - name: Run integration tests
+        run: |
+          echo "Testing $API_URL"
+          node --test --test-reporter=spec --test-reporter-destination=stdout it/admin-backend.test.mjs
+        env:
+          ADMIN_USERNAME: ${{ secrets[format('{0}_ADMIN_USERNAME', env.PREFIX)] || secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets[format('{0}_ADMIN_PASSWORD', env.PREFIX)] || secrets.ADMIN_PASSWORD }}
