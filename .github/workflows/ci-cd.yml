@@ -226,9 +226,28 @@ jobs:
       # (token needs Zone > Workers Routes: Edit)
       - name: Deploy Worker + container
         run: |
-          args=(--config wrangler.ci.json)
+          # max_instances is 1, so there is nothing to roll out gradually
+          args=(--config wrangler.ci.json --containers-rollout immediate)
           [ -n "$AUTH_DOMAIN" ] && args+=(--domain "$AUTH_DOMAIN")
           npx wrangler deploy "${args[@]}"
+
+      # Rollouts finish asynchronously; wait, so the integration tests hit the new image.
+      # Container applications are named <worker>-<class, lower case>.
+      - name: Wait for the container rollout
+        run: |
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/containers/applications"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          app=$(curl -sf -H "$auth" "$api" | jq -r --arg n "$WORKER_NAME-adminbackend" '.result[] | select(.name == $n) | .id')
+          [ -n "$app" ] || { echo "Container application $WORKER_NAME-adminbackend not found"; exit 1; }
+          for _ in $(seq 1 60); do
+            status=$(curl -sf -H "$auth" "$api/$app/rollouts" | jq -r '.result | sort_by(.created_at) | last | .status // "none"')
+            case "$status" in
+              completed|none) echo "Rollout: $status"; exit 0 ;;
+              progressing|pending) sleep 5 ;;
+              *) echo "Rollout ended as $status"; exit 1 ;;
+            esac
+          done
+          echo "Rollout still $status after 5 min"; exit 1
 
       # Set after deploy so the first deploy can create the Worker; changing
       # secrets rolls a new version, so the container restarts with the new values.
