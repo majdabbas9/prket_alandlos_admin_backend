@@ -35,17 +35,39 @@ test('health check answers', async () => {
   assert.equal(typeof res.body.status, 'string');
 });
 
-test('CORS preflight allows the admin frontend to POST with a bearer token', async () => {
-  const res = await request('OPTIONS', '/auth/login', {
+// With a custom domain CORS only allows the admin site (CI sets CORS_ORIGINS), whose hostname is
+// the auth one with "auth" -> "admin" (auth.example.com -> admin.example.com, dev-auth.* ->
+// dev-admin.*). On workers.dev CORS stays open.
+const apiHost = new URL(API_URL).hostname;
+const customDomain = !apiHost.endsWith('.workers.dev');
+const ADMIN_ORIGIN = customDomain
+  ? `https://${apiHost.replace(/^((?:.*-)?)auth\./, '$1admin.')}`
+  : 'https://admin.example.com';
+
+const preflight = (origin) =>
+  request('OPTIONS', '/auth/login', {
     headers: {
-      Origin: 'https://admin.example.com',
+      Origin: origin,
       'Access-Control-Request-Method': 'POST',
       'Access-Control-Request-Headers': 'content-type,authorization',
     },
   });
+
+test('CORS preflight allows the admin frontend to POST with a bearer token', async () => {
+  const res = await preflight(ADMIN_ORIGIN);
   assert.ok(res.status === 200 || res.status === 204, `HTTP ${res.status}`);
-  assert.ok(res.headers.get('access-control-allow-origin'), 'missing Access-Control-Allow-Origin');
+  const allowed = res.headers.get('access-control-allow-origin');
+  assert.ok(allowed === ADMIN_ORIGIN || allowed === '*', `Access-Control-Allow-Origin: ${allowed}`);
 });
+
+test(
+  'CORS does not allow other websites',
+  { skip: !customDomain && 'CORS is open on workers.dev' },
+  async () => {
+    const res = await preflight('https://evil.example');
+    assert.equal(res.headers.get('access-control-allow-origin'), null);
+  },
+);
 
 test('validate rejects a request with no token', async () => {
   const res = await request('POST', '/auth/validate', { body: {} });
