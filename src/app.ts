@@ -33,12 +33,21 @@ app.get('/health', (req, res) => {
   res.json({ status: 'Auth server is running' });
 });
 
-app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  logger.error(
-    { err, method: req.method, url: req.originalUrl },
-    `Unhandled Server Error on ${req.method} ${req.originalUrl}: ${err.message}`,
-  );
-  res.status(500).json({ error: err.message });
-});
+app.use(
+  (
+    err: Error & { status?: number },
+    req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction,
+  ) => {
+    // Client errors raised by middleware (e.g. malformed JSON from express.json) carry a 4xx status
+    const status = err.status && err.status >= 400 && err.status < 500 ? err.status : 500;
+    logger.error(
+      { err, method: req.method, url: req.originalUrl },
+      `Unhandled Server Error on ${req.method} ${req.originalUrl}: ${err.message}`,
+    );
+    res.status(status).json({ error: err.message });
+  },
+);
 
 export default app;

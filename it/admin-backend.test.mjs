@@ -1,8 +1,9 @@
 // Integration tests for the deployed admin backend (/auth/* on the API Worker).
-// Read-only: login and token checks only - the password is never changed.
+// Read-only: login and token checks only - the password is never changed (the success path is
+// covered by the unit tests; changing the shared admin's real password risks a lockout).
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { request, waitUntilReady, login, hasCredentials, ADMIN_USERNAME } from './lib.mjs';
+import { request, waitUntilReady, login, hasCredentials, API_URL, ADMIN_USERNAME } from './lib.mjs';
 
 const needsCredentials = { skip: !hasCredentials && 'ADMIN_USERNAME / ADMIN_PASSWORD not set' };
 
@@ -14,6 +15,24 @@ before(async () => {
     (res) => res.status === 401 && res.body?.success === false,
     { body: {} },
   );
+});
+
+test('health check answers', async () => {
+  const res = await request('GET', '/health');
+  assert.equal(res.status, 200);
+  assert.equal(typeof res.body.status, 'string');
+});
+
+test('CORS preflight allows the admin frontend to POST with a bearer token', async () => {
+  const res = await request('OPTIONS', '/auth/login', {
+    headers: {
+      Origin: 'https://admin.example.com',
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type,authorization',
+    },
+  });
+  assert.ok(res.status === 200 || res.status === 204, `HTTP ${res.status}`);
+  assert.ok(res.headers.get('access-control-allow-origin'), 'missing Access-Control-Allow-Origin');
 });
 
 test('validate rejects a request with no token', async () => {
@@ -46,6 +65,24 @@ test('login rejects an unknown user', async () => {
   assert.equal(res.body.message, 'Invalid credentials');
 });
 
+test('login rejects missing credentials with 400', async () => {
+  for (const body of [{}, { username: 'admin' }, { password: 'x' }]) {
+    const res = await request('POST', '/auth/login', { body });
+    assert.equal(res.status, 400, `body ${JSON.stringify(body)}`);
+    assert.equal(res.body.success, false);
+  }
+});
+
+test('login rejects a malformed JSON body with 400', async () => {
+  const res = await fetch(`${API_URL}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"username": "admin", "password":',
+    signal: AbortSignal.timeout(30_000),
+  });
+  assert.equal(res.status, 400);
+});
+
 test('login rejects a wrong password', needsCredentials, async () => {
   const res = await request('POST', '/auth/login', {
     body: { username: ADMIN_USERNAME, password: `wrong-${Date.now()}` },
@@ -61,7 +98,11 @@ test('login returns a token that validates', needsCredentials, async () => {
   const viaHeader = await request('POST', '/auth/validate', { token });
   assert.equal(viaHeader.status, 200);
   assert.equal(viaHeader.body.success, true);
-  assert.equal(viaHeader.body.data.username, ADMIN_USERNAME);
+  const claims = viaHeader.body.data;
+  assert.equal(claims.username, ADMIN_USERNAME);
+  assert.equal(typeof claims.role, 'string');
+  assert.ok(claims.exp > Date.now() / 1000, 'token should not be expired');
+  assert.equal(claims.password_hash, undefined, 'token must not carry the password hash');
 
   const viaBody = await request('POST', '/auth/validate', { body: { token } });
   assert.equal(viaBody.status, 200);
@@ -74,6 +115,15 @@ test('change-password requires a token', async () => {
   });
   assert.equal(res.status, 401);
   assert.equal(res.body.message, 'Token is missing');
+});
+
+test('change-password rejects an invalid token', async () => {
+  const res = await request('POST', '/auth/change-password', {
+    token: 'not-a-jwt',
+    body: { currentPassword: 'a', newPassword: 'b' },
+  });
+  assert.equal(res.status, 401);
+  assert.equal(res.body.success, false);
 });
 
 test('change-password requires both passwords', needsCredentials, async () => {

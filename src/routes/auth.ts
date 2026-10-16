@@ -9,7 +9,15 @@ const logger = getLogger(__filename);
 
 // Login route using D1
 router.post('/login', async (req: Request, res: Response) => {
-  const { username, password } = req.body;
+  const { username, password } = req.body ?? {};
+
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
+    res.status(400).json({
+      success: false,
+      message: 'Username and password are required',
+    });
+    return;
+  }
 
   try {
     const user = await getUserByUsername(username);
@@ -83,7 +91,7 @@ router.post('/validate', (req: Request, res: Response) => {
 router.post('/change-password', async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   const tokenFromBody = req.body?.token;
-  const { currentPassword, newPassword } = req.body;
+  const { currentPassword, newPassword } = req.body ?? {};
 
   let token = '';
   if (authHeader && authHeader.startsWith('Bearer ')) {
@@ -100,7 +108,12 @@ router.post('/change-password', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!currentPassword || !newPassword) {
+  if (
+    typeof currentPassword !== 'string' ||
+    typeof newPassword !== 'string' ||
+    !currentPassword ||
+    !newPassword
+  ) {
     res.status(400).json({
       success: false,
       message: 'Current password and new password are required',

@@ -1,7 +1,7 @@
 import { queryD1 } from '../utils/d1';
 import bcrypt from 'bcryptjs';
 
-const initDb = async () => {
+export const initDb = async () => {
   console.log('Initializing D1 Database...');
 
   try {
@@ -40,4 +40,7 @@ const initDb = async () => {
   }
 };
 
-initDb();
+// Run when executed directly (npm run db:init), not when imported
+if (require.main === module) {
+  initDb();
+}
