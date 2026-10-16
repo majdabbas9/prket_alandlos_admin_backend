@@ -15,6 +15,10 @@ COPY . .
 # Build TypeScript
 RUN npm run build
 
+# Commit this image was built from, reported by /health (CI passes it; local builds leave it empty)
+ARG GIT_SHA=
+ENV GIT_SHA=$GIT_SHA
+
 # Expose port
 EXPOSE 8081
 

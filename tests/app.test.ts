@@ -8,7 +8,10 @@ describe('app', () => {
     const res = await request(app).get('/health');
     expect(res.status).toBe(200);
     expect(res.headers['content-type']).toMatch(/application\/json/);
-    expect(res.body).toEqual({ status: 'Auth server is running' });
+    expect(res.body).toEqual({
+      status: 'Auth server is running',
+      version: process.env.GIT_SHA || 'unknown',
+    });
   });
 
   it('answers CORS preflight for cross-origin login requests', async () => {

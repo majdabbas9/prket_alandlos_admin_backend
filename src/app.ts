@@ -30,7 +30,7 @@ app.use('/auth', authRoutes);
 
 // Health check route
 app.get('/health', (req, res) => {
-  res.json({ status: 'Auth server is running' });
+  res.json({ status: 'Auth server is running', version: process.env.GIT_SHA || 'unknown' });
 });
 
 app.use(

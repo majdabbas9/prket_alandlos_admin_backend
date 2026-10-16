@@ -3,12 +3,14 @@
 // .github/workflows/integration-tests.yml after each publish run deploys to dev.
 //   API_URL                          admin backend Worker URL (default: dev's workers.dev URL)
 //   ADMIN_USERNAME / ADMIN_PASSWORD  admin credentials; tests that need a token skip without them
+//   EXPECTED_VERSION                 commit sha the container must report on /health (optional)
 
 export const API_URL = (
   process.env.API_URL || 'https://prket-alandlos-auth.majd-abbas222.workers.dev'
 ).replace(/\/+$/, '');
 export const ADMIN_USERNAME = process.env.ADMIN_USERNAME;
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+export const EXPECTED_VERSION = process.env.EXPECTED_VERSION;
 export const hasCredentials = Boolean(ADMIN_USERNAME && ADMIN_PASSWORD);
 
 const REQUEST_TIMEOUT_MS = 30_000;

@@ -13,6 +13,10 @@ on:
         description: 'dev or prod'
         type: string
         default: 'dev'
+      version:
+        description: 'Commit the deployed container must report on /health before the tests start'
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       environment:
@@ -63,5 +67,6 @@ jobs:
           echo "Testing $API_URL"
           node --test --test-reporter=spec --test-reporter-destination=stdout it/admin-backend.test.mjs
         env:
+          EXPECTED_VERSION: ${{ inputs.version }}
           ADMIN_USERNAME: ${{ secrets[format('{0}_ADMIN_USERNAME', env.PREFIX)] || secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets[format('{0}_ADMIN_PASSWORD', env.PREFIX)] || secrets.ADMIN_PASSWORD }}

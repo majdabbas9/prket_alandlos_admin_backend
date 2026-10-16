@@ -3,7 +3,15 @@
 // covered by the unit tests; changing the shared admin's real password risks a lockout).
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { request, waitUntilReady, login, hasCredentials, API_URL, ADMIN_USERNAME } from './lib.mjs';
+import {
+  request,
+  waitUntilReady,
+  login,
+  hasCredentials,
+  API_URL,
+  ADMIN_USERNAME,
+  EXPECTED_VERSION,
+} from './lib.mjs';
 
 const needsCredentials = { skip: !hasCredentials && 'ADMIN_USERNAME / ADMIN_PASSWORD not set' };
 
@@ -15,6 +23,10 @@ before(async () => {
     (res) => res.status === 401 && res.body?.success === false,
     { body: {} },
   );
+  // Right after a deploy the old container can keep serving for a while; wait for this commit
+  if (EXPECTED_VERSION) {
+    await waitUntilReady('GET', '/health', (res) => res.body?.version === EXPECTED_VERSION);
+  }
 });
 
 test('health check answers', async () => {

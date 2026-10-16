@@ -7,7 +7,9 @@ name: CI/CD
 #   cloudflare  - the Cloudflare Containers image (cloudflare.Dockerfile, built on top of the
 #                 GHCR image) to each environment's Cloudflare registry, same tags
 #   deploy      - the Worker in cloudflare/ with that image, to each environment
-#   it          - integration tests (integration-tests.yml) against what was just deployed
+#   it          - integration tests (integration-tests.yml) against what was just deployed; they
+#                 wait until /health reports this commit (the rollout API can say "completed"
+#                 while the old container still serves)
 # Names, hostnames and IDs come from prket_alandlos_infra's scripts/env-config.mjs, and the
 # D1 database + admin user from its Provision workflow - run that once on a new account
 # before this deploys.
@@ -83,6 +85,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: GIT_SHA=${{ github.sha }}
 
   cloudflare:
     needs: ghcr
@@ -284,4 +287,5 @@ jobs:
     uses: ./.github/workflows/integration-tests.yml
     with:
       environment: dev
+      version: ${{ github.sha }}
     secrets: inherit
