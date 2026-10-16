@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import app from '../src/app';
 import { getUserByUsername, updatePassword, User } from '../src/utils/d1';
+import { LOGIN_LIMITS, resetLoginLimiter } from '../src/utils/loginLimiter';
 
 // D1 is replaced by an in-memory users table, so the routes run their real bcrypt/JWT logic
 // end to end and a password change is observable through later logins.
@@ -25,6 +26,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  resetLoginLimiter();
   users = new Map([
     [
       ADMIN.username,
@@ -74,6 +76,13 @@ describe('POST /auth/login', () => {
     expect(res.body).toEqual({ success: false, message: 'Invalid credentials' });
   });
 
+  it('runs a bcrypt compare for unknown users too (no timing-based enumeration)', async () => {
+    const compare = jest.spyOn(bcrypt, 'compare');
+    await login({ username: 'nobody', password: 'whatever' });
+    expect(compare).toHaveBeenCalledTimes(1);
+    compare.mockRestore();
+  });
+
   it('is case-sensitive on the password', async () => {
     const res = await login({ username: ADMIN.username, password: ADMIN.password.toUpperCase() });
     expect(res.status).toBe(401);
@@ -99,9 +108,95 @@ describe('POST /auth/login', () => {
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ success: false, message: 'Internal server error during login' });
   });
+
+  describe('brute-force limit', () => {
+    const failFrom = (ip: string, username = ADMIN.username) =>
+      login({ username, password: 'wrong' }).set('CF-Connecting-IP', ip);
+
+    it('blocks an IP with 429 and Retry-After after too many failures, before the password check', async () => {
+      for (let i = 0; i < LOGIN_LIMITS.MAX_FAILURES_PER_IP; i++) {
+        expect((await failFrom('203.0.113.1')).status).toBe(401);
+      }
+      mockedGetUser.mockClear();
+
+      const res = await login({ username: ADMIN.username, password: ADMIN.password }).set(
+        'CF-Connecting-IP',
+        '203.0.113.1',
+      );
+      expect(res.status).toBe(429);
+      expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+      expect(mockedGetUser).not.toHaveBeenCalled();
+    });
+
+    it('does not block other IPs', async () => {
+      for (let i = 0; i < LOGIN_LIMITS.MAX_FAILURES_PER_IP; i++) await failFrom('203.0.113.1');
+      const res = await login({ username: ADMIN.username, password: ADMIN.password }).set(
+        'CF-Connecting-IP',
+        '203.0.113.2',
+      );
+      expect(res.status).toBe(200);
+    });
+
+    it('blocks a username targeted from many IPs', async () => {
+      for (let i = 0; i < LOGIN_LIMITS.MAX_FAILURES_PER_USERNAME; i++) {
+        await failFrom(`198.51.100.${i}`);
+      }
+      expect((await failFrom('192.0.2.200')).status).toBe(429);
+      expect((await failFrom('192.0.2.200', 'someone-else')).status).toBe(401);
+    });
+
+    it('counts a burst of parallel attempts', async () => {
+      const results = await Promise.all(
+        Array.from({ length: LOGIN_LIMITS.MAX_FAILURES_PER_IP + 5 }, () => failFrom('203.0.113.9')),
+      );
+      expect(results.filter((r) => r.status === 401)).toHaveLength(
+        LOGIN_LIMITS.MAX_FAILURES_PER_IP,
+      );
+      expect(results.filter((r) => r.status === 429)).toHaveLength(5);
+    });
+
+    it('resets an IP after a successful login', async () => {
+      for (let i = 0; i < LOGIN_LIMITS.MAX_FAILURES_PER_IP - 1; i++) await failFrom('203.0.113.3');
+      const ok = await login({ username: ADMIN.username, password: ADMIN.password }).set(
+        'CF-Connecting-IP',
+        '203.0.113.3',
+      );
+      expect(ok.status).toBe(200);
+      expect((await failFrom('203.0.113.3')).status).toBe(401);
+    });
+  });
 });
 
 describe('POST /auth/validate', () => {
+  it('rejects a correctly signed token without a password version (issued elsewhere)', async () => {
+    const token = jwt.sign({ username: ADMIN.username, role: 'admin' }, SECRET);
+    const res = await request(app).post('/auth/validate').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects the token of a user who was deleted', async () => {
+    const token = await loginToken();
+    users.clear();
+    const res = await request(app).post('/auth/validate').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(401);
+  });
+
+  it('reports the role currently in the database', async () => {
+    const token = await loginToken();
+    users.get(ADMIN.username)!.role = 'viewer';
+    const res = await request(app).post('/auth/validate').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.role).toBe('viewer');
+  });
+
+  it('answers 500 without leaking details when the database fails', async () => {
+    const token = await loginToken();
+    mockedGetUser.mockRejectedValueOnce(new Error('D1 internal detail'));
+    const res = await request(app).post('/auth/validate').set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toMatch(/D1 internal detail/);
+  });
+
   it('accepts a login token from the Authorization header and returns its claims', async () => {
     const token = await loginToken();
     const res = await request(app).post('/auth/validate').set('Authorization', `Bearer ${token}`);
@@ -164,18 +259,24 @@ describe('POST /auth/change-password', () => {
     const token = await loginToken();
     const res = await changePassword(token, {
       currentPassword: ADMIN.password,
-      newPassword: 'n3w-pass',
+      newPassword: 'n3w-password-123',
     });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true, message: 'Password changed successfully' });
+    expect(res.body).toEqual({
+      success: true,
+      message: 'Password changed successfully',
+      token: expect.any(String),
+    });
     expect(mockedUpdatePassword).toHaveBeenCalledTimes(1);
     const [username, storedHash] = mockedUpdatePassword.mock.calls[0];
     expect(username).toBe(ADMIN.username);
-    expect(storedHash).not.toBe('n3w-pass'); // stored hashed, never in clear
-    expect(await bcrypt.compare('n3w-pass', storedHash)).toBe(true);
+    expect(storedHash).not.toBe('n3w-password-123'); // stored hashed, never in clear
+    expect(await bcrypt.compare('n3w-password-123', storedHash)).toBe(true);
 
-    expect((await login({ username: ADMIN.username, password: 'n3w-pass' })).status).toBe(200);
+    expect((await login({ username: ADMIN.username, password: 'n3w-password-123' })).status).toBe(
+      200,
+    );
     expect((await login({ username: ADMIN.username, password: ADMIN.password })).status).toBe(401);
   });
 
@@ -184,14 +285,17 @@ describe('POST /auth/change-password', () => {
     const res = await changePassword(undefined, {
       token,
       currentPassword: ADMIN.password,
-      newPassword: 'n3w-pass',
+      newPassword: 'n3w-password-123',
     });
     expect(res.status).toBe(200);
   });
 
   it('rejects a wrong current password with 401 and changes nothing', async () => {
     const token = await loginToken();
-    const res = await changePassword(token, { currentPassword: 'wrong', newPassword: 'n3w-pass' });
+    const res = await changePassword(token, {
+      currentPassword: 'wrong',
+      newPassword: 'n3w-password-123',
+    });
 
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ success: false, message: 'Incorrect current password' });
@@ -216,7 +320,7 @@ describe('POST /auth/change-password', () => {
   ])('returns 401 for a %s token and changes nothing', async (_label, makeToken) => {
     const res = await changePassword(makeToken(), {
       currentPassword: ADMIN.password,
-      newPassword: 'n3w-pass',
+      newPassword: 'n3w-password-123',
     });
     expect(res.status).toBe(401);
     expect(res.body.success).toBe(false);
@@ -240,11 +344,55 @@ describe('POST /auth/change-password', () => {
     expect(mockedUpdatePassword).not.toHaveBeenCalled();
   });
 
-  it('returns 404 when the token is valid but the user no longer exists', async () => {
-    const token = jwt.sign({ username: 'deleted-user', role: 'admin' }, SECRET);
-    const res = await changePassword(token, { currentPassword: 'a', newPassword: 'b' });
-    expect(res.status).toBe(404);
-    expect(res.body).toEqual({ success: false, message: 'User not found' });
+  it('returns 401 when the token is valid but the user no longer exists', async () => {
+    const token = await loginToken();
+    users.clear();
+    const res = await changePassword(token, {
+      currentPassword: ADMIN.password,
+      newPassword: 'n3w-password-123',
+    });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ success: false, message: 'Invalid or expired token' });
     expect(mockedUpdatePassword).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['shorter than 12 characters', 'short-pass'],
+    ['the same as the current one', ADMIN.password],
+  ])('returns 400 when the new password is %s', async (_label, newPassword) => {
+    const token = await loginToken();
+    const res = await changePassword(token, { currentPassword: ADMIN.password, newPassword });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/at least 12 characters/);
+    expect(mockedUpdatePassword).not.toHaveBeenCalled();
+  });
+
+  it('revokes tokens issued before the change and returns a working new one', async () => {
+    const oldToken = await loginToken();
+    const res = await changePassword(oldToken, {
+      currentPassword: ADMIN.password,
+      newPassword: 'n3w-password-123',
+    });
+    expect(res.status).toBe(200);
+
+    const withOld = await request(app)
+      .post('/auth/validate')
+      .set('Authorization', `Bearer ${oldToken}`);
+    expect(withOld.status).toBe(401);
+    const withNew = await request(app)
+      .post('/auth/validate')
+      .set('Authorization', `Bearer ${res.body.token}`);
+    expect(withNew.status).toBe(200);
+  });
+
+  it('answers 500 without leaking details when the database fails', async () => {
+    const token = await loginToken();
+    mockedUpdatePassword.mockRejectedValueOnce(new Error('D1 internal detail'));
+    const res = await changePassword(token, {
+      currentPassword: ADMIN.password,
+      newPassword: 'n3w-password-123',
+    });
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toMatch(/D1 internal detail/);
   });
 });

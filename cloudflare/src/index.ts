@@ -8,6 +8,8 @@ interface Env {
   CLOUDFLARE_DATABASE_ID: string;
   D1_API_TOKEN: string;
   JWT_SECRET: string;
+  // Comma-separated browser origins allowed by CORS (the admin site); unset = any origin
+  CORS_ORIGINS?: string;
   // "true" = API switched off (set by prket_alandlos_infra's power.yml)
   API_DISABLED?: string;
 }
@@ -43,6 +45,7 @@ export class AdminBackend extends Container<Env> {
       CLOUDFLARE_DATABASE_ID: env.CLOUDFLARE_DATABASE_ID,
       CLOUDFLARE_API_TOKEN: env.D1_API_TOKEN,
       JWT_SECRET: env.JWT_SECRET,
+      ...(env.CORS_ORIGINS ? { CORS_ORIGINS: env.CORS_ORIGINS } : {}),
     };
   }
 
@@ -69,7 +72,10 @@ export default {
     // Switched off: never wake the container. A running one gets no traffic and
     // shuts down gracefully once sleepAfter elapses; nothing is deleted.
     if (env.API_DISABLED === 'true') {
-      return Response.json({ error: 'Service temporarily unavailable' }, { status: 503, headers: { 'Retry-After': '3600' } });
+      return Response.json(
+        { error: 'Service temporarily unavailable' },
+        { status: 503, headers: { 'Retry-After': '3600' } },
+      );
     }
     return getContainer(env.ADMIN_BACKEND).fetch(request);
   },

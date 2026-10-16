@@ -30,6 +30,25 @@ describe('app', () => {
     expect(res.headers['access-control-allow-origin']).toBe('*');
   });
 
+  it('only allows the configured origins when CORS_ORIGINS is set', async () => {
+    process.env.CORS_ORIGINS = 'https://admin.example.com/, https://other.example.com';
+    try {
+      let restricted: typeof app = app;
+      jest.isolateModules(() => {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        restricted = require('../src/app').default;
+      });
+      const allowed = await request(restricted)
+        .get('/health')
+        .set('Origin', 'https://admin.example.com');
+      expect(allowed.headers['access-control-allow-origin']).toBe('https://admin.example.com');
+      const other = await request(restricted).get('/health').set('Origin', 'https://evil.example');
+      expect(other.headers['access-control-allow-origin']).toBeUndefined();
+    } finally {
+      delete process.env.CORS_ORIGINS;
+    }
+  });
+
   it('rejects a malformed JSON body with 400, not 500', async () => {
     const res = await request(app)
       .post('/auth/login')

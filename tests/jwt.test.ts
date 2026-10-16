@@ -56,3 +56,33 @@ describe('jwt utils', () => {
     expect(() => verifyToken(token)).toThrow('Invalid or expired token');
   });
 });
+
+describe('JWT_SECRET guard', () => {
+  // dotenv is stubbed so .env can't fill in the secret being tested
+  const loadWithSecret = async (secret: string | undefined) => {
+    const original = process.env.JWT_SECRET;
+    if (secret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = secret;
+    try {
+      await jest.isolateModulesAsync(async () => {
+        jest.doMock('dotenv', () => ({ config: jest.fn() }));
+        await import('../src/utils/jwt');
+      });
+    } finally {
+      process.env.JWT_SECRET = original;
+      jest.dontMock('dotenv');
+    }
+  };
+
+  it.each([
+    ['unset', undefined],
+    ['empty', ''],
+    ['too short', 'default_secret'],
+  ])('refuses to load when JWT_SECRET is %s', async (_label, secret) => {
+    await expect(loadWithSecret(secret)).rejects.toThrow(/JWT_SECRET must be set/);
+  });
+
+  it('loads with a long enough secret', async () => {
+    await expect(loadWithSecret('x'.repeat(32))).resolves.toBeUndefined();
+  });
+});

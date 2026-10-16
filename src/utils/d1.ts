@@ -45,7 +45,8 @@ export const queryD1 = async <T = Record<string, unknown>>(
   const data = (await response.json()) as D1Response;
 
   if (!data.success) {
-    logger.error({ errors: data.errors, sql, params }, 'D1 Query Error');
+    // params are left out: they can hold password hashes
+    logger.error({ errors: data.errors, sql }, 'D1 Query Error');
     throw new Error(data.errors[0]?.message || 'Database query failed');
   }
 
