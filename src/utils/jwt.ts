@@ -3,7 +3,12 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-const JWT_SECRET = process.env.JWT_SECRET || 'default_secret';
+// No fallback: a known default would let anyone forge admin tokens, so refuse to start instead
+const MIN_SECRET_LENGTH = 32;
+const JWT_SECRET = process.env.JWT_SECRET ?? '';
+if (JWT_SECRET.length < MIN_SECRET_LENGTH) {
+  throw new Error(`JWT_SECRET must be set and at least ${MIN_SECRET_LENGTH} characters long`);
+}
 
 /**
  * Generate a JWT token
@@ -15,7 +20,7 @@ export const generateToken = (
   payload: object,
   expiresIn: jwt.SignOptions['expiresIn'] = '1h',
 ): string => {
-  const options: jwt.SignOptions = { expiresIn };
+  const options: jwt.SignOptions = { expiresIn, algorithm: 'HS256' };
   return jwt.sign(payload, JWT_SECRET, options);
 };
 
@@ -26,7 +31,7 @@ export const generateToken = (
  */
 export const verifyToken = (token: string): object | string => {
   try {
-    return jwt.verify(token, JWT_SECRET);
+    return jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
   } catch {
     throw new Error('Invalid or expired token');
   }

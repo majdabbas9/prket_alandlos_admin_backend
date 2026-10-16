@@ -185,6 +185,10 @@ jobs:
             echo "WORKER_NAME=$(get auth_worker)"
             echo "CLOUDFLARE_DATABASE_ID=$(get database_id)"
             echo "AUTH_DOMAIN=$(get auth)"
+            # Browsers may only call this API from the admin site. Without a custom domain the
+            # pages.dev hostname isn't known for sure, so CORS stays open there.
+            admin=$(get admin)
+            [ -n "$admin" ] && echo "CORS_ORIGINS=https://$admin,https://$(get admin_project).pages.dev"
             echo "INSTANCE=${INSTANCE:-$(get admin_backend_instance)}"
           } >> "$GITHUB_ENV"
         env:
@@ -270,9 +274,13 @@ jobs:
               export JWT_SECRET
             fi
           fi
+          if [ "$DEDICATED_D1_TOKEN" != "true" ]; then
+            echo "::warning::${{ matrix.prefix }}_D1_API_TOKEN is not set, so the container gets the deploy token (it can also redeploy Workers and edit DNS). Create a token with only Account > D1: Edit and save it as ${{ matrix.prefix }}_D1_API_TOKEN."
+          fi
           node -e '
             const keys = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_DATABASE_ID", "D1_API_TOKEN"];
             if (!process.env.SKIP_JWT) keys.push("JWT_SECRET");
+            if (process.env.CORS_ORIGINS) keys.push("CORS_ORIGINS");
             const missing = keys.filter((k) => !process.env[k]);
             if (missing.length) { console.error("Missing: " + missing.join(", ")); process.exit(1); }
             console.log(JSON.stringify(Object.fromEntries(keys.map((k) => [k, process.env[k]]))));
@@ -280,6 +288,7 @@ jobs:
         env:
           # The D1 REST API token; defaults to the deploy token (needs Account > D1: Edit)
           D1_API_TOKEN: ${{ secrets[format('{0}_D1_API_TOKEN', matrix.prefix)] || secrets[format('{0}_CLOUDFLARE_API_TOKEN', matrix.prefix)] }}
+          DEDICATED_D1_TOKEN: ${{ secrets[format('{0}_D1_API_TOKEN', matrix.prefix)] != '' }}
           JWT_SECRET: ${{ secrets[format('{0}_JWT_SECRET', matrix.prefix)] }}
 
   it:

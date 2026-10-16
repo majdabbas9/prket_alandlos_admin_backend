@@ -19,8 +19,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Enable Cross-Origin Resource Sharing (CORS)
-app.use(cors());
+// Cross-Origin Resource Sharing: CORS_ORIGINS (comma-separated, e.g. the admin site's origin)
+// limits which websites may call this API from a browser. Unset = any origin (local development).
+const corsOrigins = (process.env.CORS_ORIGINS ?? '')
+  .split(',')
+  .map((origin) => origin.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+app.use(cors(corsOrigins.length ? { origin: corsOrigins } : undefined));
 
 // Middleware to parse JSON bodies
 app.use(express.json());
@@ -46,7 +51,8 @@ app.use(
       { err, method: req.method, url: req.originalUrl },
       `Unhandled Server Error on ${req.method} ${req.originalUrl}: ${err.message}`,
     );
-    res.status(status).json({ error: err.message });
+    // 4xx messages are meant for the client; a 500's message may hold internals
+    res.status(status).json({ error: status < 500 ? err.message : 'Internal server error' });
   },
 );
 
