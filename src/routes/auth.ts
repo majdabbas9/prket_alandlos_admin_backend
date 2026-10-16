@@ -176,16 +176,17 @@ router.post('/change-password', async (req: Request, res: Response) => {
     return;
   }
 
-  if (newPassword.length < MIN_PASSWORD_LENGTH || newPassword === currentPassword) {
-    res.status(400).json({
-      success: false,
-      message: `New password must be at least ${MIN_PASSWORD_LENGTH} characters and differ from the current one`,
-    });
-    return;
-  }
-
   try {
+    // Token first: an unauthenticated caller learns nothing about the password rules
     const { user } = await authenticate(token);
+
+    if (newPassword.length < MIN_PASSWORD_LENGTH || newPassword === currentPassword) {
+      res.status(400).json({
+        success: false,
+        message: `New password must be at least ${MIN_PASSWORD_LENGTH} characters and differ from the current one`,
+      });
+      return;
+    }
 
     const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
     if (!isMatch) {

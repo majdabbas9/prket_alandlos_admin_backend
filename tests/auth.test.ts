@@ -318,9 +318,10 @@ describe('POST /auth/change-password', () => {
     ['expired', expiredToken],
     ['signed with another secret', foreignToken],
   ])('returns 401 for a %s token and changes nothing', async (_label, makeToken) => {
+    // A too-short new password must not turn this into a 400: the token is checked first
     const res = await changePassword(makeToken(), {
       currentPassword: ADMIN.password,
-      newPassword: 'n3w-password-123',
+      newPassword: 'b',
     });
     expect(res.status).toBe(401);
     expect(res.body.success).toBe(false);
